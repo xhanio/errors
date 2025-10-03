@@ -1,4 +1,4 @@
-module xhanio/errors
+module github.com/xhanio/errors
 
 go 1.24.5
 
