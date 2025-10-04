@@ -8,7 +8,7 @@ import (
 
 type stack []uintptr
 
-const skip = 3 // skip runtime.Callers, callers(), and the error creation function (New/Wrap/etc)
+const skip = 4 // skip runtime.Callers, callers(), and the error creation function (New/Wrap/etc)
 
 // callers captures the current stack trace and returns it as a stack pointer
 func callers() *stack {
