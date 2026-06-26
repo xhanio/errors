@@ -1,20 +1,31 @@
 package errors
 
+import "sync"
+
 var _ Category = (*errCategory)(nil)
 
+var categories = &errCategories{
+	data: make(map[string]Category),
+}
+
+type errCategories struct {
+	mu   sync.RWMutex
+	data map[string]Category
+}
+
 type errCategory struct {
-	description string
-	statusCode  int
+	category   string
+	statusCode int
 }
 
-// newCategory creates a new errCategory instance with the given description and status code
-func newCategory(description string, statusCode int) *errCategory {
-	return &errCategory{description: description, statusCode: statusCode}
+// newCategory creates a new errCategory instance with the given category and status code
+func newCategory(category string, statusCode int) *errCategory {
+	return &errCategory{category: category, statusCode: statusCode}
 }
 
-// Error returns the description of the error category, implementing the error interface
+// Error returns the category of the error category, implementing the error interface
 func (c *errCategory) Error() string {
-	return c.description
+	return c.category
 }
 
 // StatusCode returns the HTTP status code associated with this error category

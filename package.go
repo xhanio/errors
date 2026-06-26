@@ -75,6 +75,16 @@ var (
 	DBFailed = NewCategory("DBFailed", http.StatusInternalServerError)
 )
 
-func NewCategory(description string, statusCode int) Category {
-	return newCategory(description, statusCode)
+func NewCategory(category string, statusCode int) Category {
+	c := newCategory(category, statusCode)
+	categories.mu.Lock()
+	defer categories.mu.Unlock()
+	categories.data[c.Error()] = c
+	return c
+}
+
+func LookupCategory(name string) Category {
+	categories.mu.RLock()
+	defer categories.mu.RUnlock()
+	return categories.data[name]
 }
