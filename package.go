@@ -36,12 +36,18 @@ func Has(err error, cause error) bool {
 	return be.Has(cause)
 }
 
-func Is(err error, c Category) bool {
-	be, ok := err.(Error)
-	if !ok {
-		return false
+func Is(err error, target error) bool {
+	switch t := target.(type) {
+	case Category:
+		be, ok := err.(Error)
+		if !ok {
+			return false
+		}
+		return be.Category() == t
+	case error:
+		return err == t
 	}
-	return be.Category() == c
+	return false
 }
 
 func Message(err error) string {
