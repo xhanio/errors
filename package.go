@@ -1,6 +1,7 @@
 package errors
 
 import (
+	stderrors "errors"
 	"net/http"
 
 	"go.uber.org/multierr"
@@ -45,7 +46,7 @@ func Is(err error, target error) bool {
 		}
 		return be.Category() == t
 	case error:
-		return err == t
+		return stderrors.Is(err, t)
 	}
 	return false
 }
