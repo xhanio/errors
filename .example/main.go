@@ -60,7 +60,7 @@ func main() {
 		fmt.Printf("[ format with %%s ]\n%s\n", err) // string representation of error chain
 		fmt.Printf("[ format with %%v ]\n%v\n", err) // verbose with full chain
 
-		// Has checks if a specific error exists anywhere in the error chain
+		// Has checks if a specific error exists anywhere in the error chain (deprecated; Is does the same)
 		if errors.Has(err, ERR_CONN) {
 			fmt.Println("err chain contains ERR_CONN")
 		}

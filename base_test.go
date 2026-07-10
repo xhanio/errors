@@ -1,6 +1,7 @@
 package errors
 
 import (
+	stderrors "errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -488,73 +489,41 @@ func TestErrBaseFormat(t *testing.T) {
 	}
 }
 
+// TestErrBaseHas covers the deprecated Has method, which remains on the Error
+// interface. It must agree with the package-level Has.
 func TestErrBaseHas(t *testing.T) {
 	cause1 := &base{message: "cause1"}
 	cause2 := &base{message: "cause2"}
-	stdErr := fmt.Errorf("standard error")
+	stdErr := stderrors.New("std")
 
 	tests := []struct {
 		name   string
-		setup  func() *base
+		eb     *base
 		target error
 		want   bool
 	}{
-		{
-			name: "has direct cause",
-			setup: func() *base {
-				return &base{message: "wrapper", cause: cause1}
-			},
-			target: cause1,
-			want:   true,
-		},
-		{
-			name: "has nested cause",
-			setup: func() *base {
-				middle := &base{message: "middle", cause: cause1}
-				return &base{message: "top", cause: middle}
-			},
-			target: cause1,
-			want:   true,
-		},
-		{
-			name: "has standard error cause",
-			setup: func() *base {
-				return &base{message: "wrapper", cause: stdErr}
-			},
-			target: stdErr,
-			want:   true,
-		},
-		{
-			name: "does not have unrelated error",
-			setup: func() *base {
-				return &base{message: "wrapper", cause: cause1}
-			},
-			target: cause2,
-			want:   false,
-		},
-		{
-			name: "has self",
-			setup: func() *base {
-				eb := &base{message: "self"}
-				return eb
-			},
-			target: nil, // will be set to the error itself in test
-			want:   true,
-		},
+		{"direct cause", &base{message: "wrapper", cause: cause1}, cause1, true},
+		{"nested cause", &base{message: "top", cause: &base{message: "middle", cause: cause1}}, cause1, true},
+		{"standard error cause", &base{message: "wrapper", cause: stdErr}, stdErr, true},
+		{"unrelated error", &base{message: "wrapper", cause: cause1}, cause2, false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			eb := tt.setup()
-			target := tt.target
-			if target == nil && tt.name == "has self" {
-				target = eb
-			}
-			got := eb.Has(target)
+			got := tt.eb.Has(tt.target)
 			if got != tt.want {
 				t.Errorf("Has() = %v, want %v", got, tt.want)
 			}
+			if pkg := Has(tt.eb, tt.target); pkg != got {
+				t.Errorf("base.Has() = %v but package Has() = %v; they must agree", got, pkg)
+			}
 		})
+	}
+
+	// self
+	self := &base{message: "self"}
+	if !self.Has(self) {
+		t.Error("Has(self) = false, want true")
 	}
 }
 

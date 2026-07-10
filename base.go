@@ -1,6 +1,7 @@
 package errors
 
 import (
+	stderrors "errors"
 	"fmt"
 	"strings"
 
@@ -45,6 +46,9 @@ func (b *base) rootBase() *base {
 func (b *base) Message() string {
 	curr := b
 	for curr != nil && curr.message == "" {
+		if curr.cause == nil {
+			return curr.message
+		}
 		cb, ok := curr.cause.(*base)
 		if !ok {
 			return curr.cause.Error()
@@ -121,6 +125,12 @@ func (b *base) Cause() error {
 	return b.cause
 }
 
+// Unwrap returns the underlying cause of this error, allowing the standard
+// library's errors.Is and errors.As to traverse the error chain
+func (b *base) Unwrap() error {
+	return b.cause
+}
+
 // StackTrace returns the stack trace from the root error in the chain
 func (b *base) StackTrace() errors.StackTrace {
 	rb := b.rootBase()
@@ -149,20 +159,11 @@ func (b *base) Format(f fmt.State, c rune) {
 	}
 }
 
-// Has checks if the given error exists anywhere in the error chain
+// Has reports whether cause exists anywhere in this error's tree.
+//
+// Deprecated: use the package-level Is, which performs the same search.
 func (b *base) Has(cause error) bool {
-	curr := b
-	for curr != nil && curr.cause != nil {
-		if curr == cause {
-			return true
-		}
-		cb, ok := curr.cause.(*base)
-		if !ok {
-			return curr.cause == cause
-		}
-		curr = cb
-	}
-	return curr == cause
+	return stderrors.Is(b, cause)
 }
 
 // RootCause returns the root cause error at the end of the error chain
