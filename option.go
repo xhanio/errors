@@ -3,7 +3,7 @@ package errors
 import (
 	"fmt"
 
-	"k8s.io/apimachinery/pkg/labels"
+	"github.com/xhanio/labels"
 )
 
 type Option func(*base)

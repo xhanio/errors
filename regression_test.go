@@ -1,9 +1,6 @@
 package errors
 
-import (
-	"fmt"
-	"testing"
-)
+import "testing"
 
 // #2: Message() must not panic when there is no message and no cause.
 func TestMessageNoMessageNoCause(t *testing.T) {
@@ -25,8 +22,8 @@ func TestStackSkipConsistency(t *testing.T) {
 		t.Fatalf("empty stack trace: direct=%d category=%d", len(direct), len(category))
 	}
 
-	directTop := fmt.Sprintf("%n", direct[0])
-	categoryTop := fmt.Sprintf("%n", category[0])
+	directTop := direct[0].Function
+	categoryTop := category[0].Function
 	t.Logf("direct top frame:   %s", directTop)
 	t.Logf("category top frame: %s", categoryTop)
 

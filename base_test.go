@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"k8s.io/apimachinery/pkg/labels"
+	"github.com/xhanio/labels"
 )
 
 func TestErrBaseApply(t *testing.T) {
@@ -464,10 +464,12 @@ func TestErrBaseFormat(t *testing.T) {
 			},
 		},
 		{
+			// %v is Error() and nothing more; code and stack belong to %+v,
+			// which TestFormatPlusVIncludesCodeAndStack covers.
 			name: "format with %v verb",
 			verb: 'v',
 			want: func(s string) bool {
-				return strings.Contains(s, "test error") && strings.Contains(s, "TEST001")
+				return s == "test error"
 			},
 		},
 		{

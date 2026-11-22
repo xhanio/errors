@@ -330,7 +330,7 @@ func TestIs(t *testing.T) {
 		want bool
 	}{
 		{
-			name: "non-Error interface returns false",
+			name: "stdlib error resolves to Internal, not BadRequest",
 			err:  errors.New("standard error"),
 			cat:  BadRequest,
 			want: false,
@@ -416,6 +416,7 @@ func TestIsSentinel(t *testing.T) {
 		{name: "sentinel not in chain", err: Wrapf(root, "outer"), target: other, want: false},
 		{name: "sentinel is the error itself", err: root, target: root, want: true},
 		{name: "nil target", err: Wrapf(root, "outer"), target: nil, want: false},
+		{name: "nil error and nil target, as errors.Is", err: nil, target: nil, want: true},
 	}
 
 	for _, tt := range tests {
@@ -631,5 +632,63 @@ func TestCategoryMatch(t *testing.T) {
 	match := NotFound.New() == NotFound
 	if !match {
 		t.Fatal(match)
+	}
+}
+
+// Canceled is spelled as in gRPC and the standard library. The name it carried
+// before v1.2, "Cancelled", must still resolve, and Cancaled must remain the
+// same category.
+func TestCanceledName(t *testing.T) {
+	if got := Canceled.Error(); got != "Canceled" {
+		t.Errorf("Canceled.Error() = %q, want %q", got, "Canceled")
+	}
+	for _, name := range []string{"Canceled", "Cancelled"} {
+		if got := LookupCategory(name); got != Canceled {
+			t.Errorf("LookupCategory(%q) = %v, want Canceled", name, got)
+		}
+	}
+	if !Is(Cancaled.Newf("x"), Canceled) || !Is(Canceled.Newf("x"), Cancaled) {
+		t.Error("Cancaled and Canceled must be the same category")
+	}
+}
+
+// The predefined categories keep their names and status codes, and each is
+// registered under its name.
+func TestPredefinedCategories(t *testing.T) {
+	tests := []struct {
+		category Category
+		name     string
+		status   int
+	}{
+		{Canceled, "Canceled", 499},
+		{BadRequest, "BadRequest", 400},
+		{InvalidArgument, "InvalidArgument", 400},
+		{Unauthorized, "Unauthorized", 401},
+		{Forbidden, "Forbidden", 403},
+		{PermissionDenied, "PermissionDenied", 403},
+		{NotFound, "NotFound", 404},
+		{Conflict, "Conflict", 409},
+		{AlreadyExist, "AlreadyExist", 409},
+		{TooManyRequests, "TooManyRequests", 429},
+		{ResourceExhausted, "ResourceExhausted", 429},
+		{Internal, "Internal", 500},
+		{NotImplemented, "NotImplemented", 501},
+		{Unavailable, "Unavailable", 503},
+		{DeadlineExceeded, "DeadlineExceeded", 504},
+		{DBFailed, "DBFailed", 500},
+		{Combined, "Combined", 500},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.category.Error(); got != tt.name {
+				t.Errorf("name = %q, want %q", got, tt.name)
+			}
+			if got := tt.category.StatusCode(); got != tt.status {
+				t.Errorf("StatusCode() = %d, want %d", got, tt.status)
+			}
+			if got := LookupCategory(tt.name); got != tt.category {
+				t.Errorf("LookupCategory(%q) = %v, want the category", tt.name, got)
+			}
+		})
 	}
 }

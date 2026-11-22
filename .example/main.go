@@ -49,16 +49,17 @@ func main() {
 	// Example 1: Simple error creation with Newf
 	err := preflight()
 	if err != nil {
-		fmt.Printf("[ format with %%v ]\n%v\n", err)
+		fmt.Printf("[ format with %%+v ]\n%+v\n", err) // message and stack trace
 	}
 
 	// Example 2: Error wrapping and chain inspection
 	err = querydb()
 	if err != nil {
 		// Different format verbs show different error representations
-		fmt.Printf("[ format with %%m ]\n%m\n", err) // message only
-		fmt.Printf("[ format with %%s ]\n%s\n", err) // string representation of error chain
-		fmt.Printf("[ format with %%v ]\n%v\n", err) // verbose with full chain
+		fmt.Printf("[ format with %%m ]\n%m\n", err)   // message only
+		fmt.Printf("[ format with %%s ]\n%s\n", err)   // string representation of error chain
+		fmt.Printf("[ format with %%v ]\n%v\n", err)   // same as %s
+		fmt.Printf("[ format with %%+v ]\n%+v\n", err) // verbose: code, full chain, and stack trace
 
 		// Has checks if a specific error exists anywhere in the error chain (deprecated; Is does the same)
 		if errors.Has(err, ERR_CONN) {

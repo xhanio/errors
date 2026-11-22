@@ -3,19 +3,9 @@ package errors
 import (
 	stderrors "errors"
 	"net/http"
-
-	"go.uber.org/multierr"
 )
 
 // error
-
-// Combine returns an error holding every non-nil error passed to it, or nil if
-// there are none. The result implements Unwrap() []error, so errors.Is and
-// errors.As examine each combined error in turn. Note that a combined error is
-// a tree rather than a chain, and so carries no single category.
-func Combine(errors ...error) error {
-	return multierr.Combine(errors...)
-}
 
 // New returns a new error configured by opts, capturing a stack trace at the
 // call site. It never returns nil.
@@ -43,9 +33,13 @@ func Newf(format string, args ...any) error {
 // Wrap returns err wrapped with opts, or nil if err is nil, so it is safe to
 // call on a value that may not be an error.
 //
-// Given no options and an err this package already produced, Wrap returns err
-// unchanged. Otherwise it returns a new error whose cause is err, capturing a
-// stack trace only when err did not already carry one.
+// The result has err as its cause and captures a stack trace only when err
+// carries none worth reporting, so that StackTrace points at where the failure
+// began. A stack captured during package initialisation, as by a package-level
+// sentinel, is not worth reporting, so wrapping such an error captures a fresh
+// one. Given no options, Wrap adds nothing else, and it may return err itself.
+// Do not rely on either outcome: compare errors with Is, never with ==. The
+// result of wrapping a non-nil err always implements Error.
 func Wrap(err error, opts ...Option) error {
 	return wrapError(err, opts...)
 }
@@ -65,7 +59,7 @@ func Has(err error, cause error) bool {
 // Never call Wrapf(err, ""). Unlike Wrap, Wrapf always applies an option, so an
 // empty format does not yield err: it appends a message-less layer to the chain,
 // which lengthens Chain and allocates while adding nothing a reader can see.
-// When there is no context to add, call Wrap(err), which returns err untouched.
+// When there is no context to add, call Wrap(err), which adds no message.
 func Wrapf(err error, format string, args ...any) error {
 	return wrapError(err, WithMessage(format, args...))
 }
@@ -73,32 +67,23 @@ func Wrapf(err error, format string, args ...any) error {
 // Is reports whether err matches target. Which search it performs depends on
 // the dynamic type of target, because the two are not variations of one idea.
 //
-// If target is a Category, Is reports whether err resolves to that category.
-// An error carries exactly one category, decided by the outermost error in the
-// chain that carries one; see Error.Category. Is therefore resolves err to a
-// single category and compares the two by identity. It does not search err's
-// tree, and it never consults the standard library: a category is stored on an
-// error rather than wrapped by it, so errors.Is cannot find one. A category
-// held by an inner error is shadowed by one held further out, and categories
-// from separate NewCategory calls are never equal, even given the same name.
+// If target is a Category, Is reports whether CategoryOf(err) is that category.
+// An error resolves to exactly one category, decided by the outermost error in
+// the chain that carries one, through wrappers from any package; see CategoryOf.
+// A category held by an inner error is shadowed by one held further out, and
+// categories from separate NewCategory calls are never equal, even given the
+// same name. A tree of errors, such as one from Combine, resolves to Combined
+// unless a wrapper declares a category, so Is does not answer for its members;
+// use Any or All for that.
 //
 // Otherwise Is delegates to the standard library's errors.Is, which matches
-// target against every error in err's tree. Use this form for sentinel errors.
+// target against every error in err's tree, members of a Combine included. Use
+// this form for sentinel errors.
 func Is(err error, target error) bool {
-	switch t := target.(type) {
-	case Category:
-		switch e := err.(type) {
-		case Error:
-			return e.Category() == t
-		case Category:
-			return e == t
-		default:
-			return false
-		}
-	case error:
-		return stderrors.Is(err, t)
+	if t, ok := target.(Category); ok {
+		return err != nil && CategoryOf(err) == t
 	}
-	return false
+	return stderrors.Is(err, target)
 }
 
 // As finds the first error in err's tree whose concrete type is assignable to
@@ -114,7 +99,7 @@ func Is(err error, target error) bool {
 // element of its tree. For a Category c, As(err, &c) reports only whether a
 // Category value happens to sit in the chain: true for a bare NotFound.New(),
 // false for NotFound.Newf("gone"), whose category is nonetheless NotFound. To
-// test a category use Is; to read one use Error.Category.
+// test a category use Is; to read one use CategoryOf.
 func As(err error, target any) bool {
 	return stderrors.As(err, target)
 }
@@ -132,26 +117,52 @@ func Message(err error) string {
 // error category
 
 var (
-	Cancaled = NewCategory("Cancelled", 499) // non-standard status code for cancellation
+	Canceled = NewCategory("Canceled", 499) // non-standard status code for cancellation
 
-	BadRequest       = NewCategory("BadRequest", http.StatusBadRequest)
-	InvalidArgument  = NewCategory("InvalidArgument", http.StatusBadRequest)
-	Unauthorized     = NewCategory("Unauthorized", http.StatusUnauthorized)
-	Forbidden        = NewCategory("Forbidden", http.StatusForbidden)
-	PermissionDenied = NewCategory("PermissionDenied", http.StatusForbidden)
-	NotFound         = NewCategory("NotFound", http.StatusNotFound)
-	DeadlineExceeded = NewCategory("DeadlineExceeded", http.StatusRequestTimeout)
-	Conflict         = NewCategory("Conflict", http.StatusConflict)
-	AlreadyExist     = NewCategory("AlreadyExist", http.StatusConflict)
-	TooManyRequests  = NewCategory("TooManyRequests", http.StatusTooManyRequests)
+	// Cancaled is a misspelling of Canceled, kept so existing code compiles.
+	// It is the same category, so errors created with either name match both.
+	//
+	// Deprecated: use Canceled.
+	Cancaled = Canceled
 
-	Internal          = NewCategory("Internal", http.StatusInternalServerError)
-	NotImplemented    = NewCategory("NotImplemented", http.StatusNotImplemented)
-	Unavailable       = NewCategory("Unavailable", http.StatusServiceUnavailable)
-	ResourceExhausted = NewCategory("ResourceExhausted", http.StatusServiceUnavailable)
+	BadRequest        = NewCategory("BadRequest", http.StatusBadRequest)
+	InvalidArgument   = NewCategory("InvalidArgument", http.StatusBadRequest)
+	Unauthorized      = NewCategory("Unauthorized", http.StatusUnauthorized)
+	Forbidden         = NewCategory("Forbidden", http.StatusForbidden)
+	PermissionDenied  = NewCategory("PermissionDenied", http.StatusForbidden)
+	NotFound          = NewCategory("NotFound", http.StatusNotFound)
+	Conflict          = NewCategory("Conflict", http.StatusConflict)
+	AlreadyExist      = NewCategory("AlreadyExist", http.StatusConflict)
+	TooManyRequests   = NewCategory("TooManyRequests", http.StatusTooManyRequests)
+	ResourceExhausted = NewCategory("ResourceExhausted", http.StatusTooManyRequests) // gRPC RESOURCE_EXHAUSTED maps to 429
+
+	Internal         = NewCategory("Internal", http.StatusInternalServerError)
+	NotImplemented   = NewCategory("NotImplemented", http.StatusNotImplemented)
+	Unavailable      = NewCategory("Unavailable", http.StatusServiceUnavailable)
+	DeadlineExceeded = NewCategory("DeadlineExceeded", http.StatusGatewayTimeout) // gRPC DEADLINE_EXCEEDED maps to 504
 
 	DBFailed = NewCategory("DBFailed", http.StatusInternalServerError)
+
+	// Combined is the category of a tree of errors, such as one from Combine or
+	// errors.Join, that no wrapper has given a category. Such an error is like
+	// an unlabelled archive: it reports that an operation failed for several
+	// reasons, and nothing about the operation can be judged until it is
+	// unpacked with Any, All, or ErrorsOf. Declare the failure as a whole instead,
+	// for example BadRequest.Wrapf(Combine(errs...), "invalid request").
+	//
+	// Combined maps to 500: an undeclared tree reaching an HTTP handler means
+	// whoever combined the errors left out what they meant. It is distinct from
+	// Internal, so a handler can recognise a tree and unpack it.
+	Combined = NewCategory("Combined", http.StatusInternalServerError)
 )
+
+func init() {
+	// Canceled was named "Cancelled" before v1.2. Keep the old name resolvable,
+	// so a name recorded or sent by an older version still looks up.
+	categories.mu.Lock()
+	defer categories.mu.Unlock()
+	categories.data["Cancelled"] = Canceled
+}
 
 // NewCategory returns a new Category with the given name and HTTP status code,
 // and registers it under that name for LookupCategory.

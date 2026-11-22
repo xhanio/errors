@@ -3,10 +3,11 @@ package errors
 import (
 	stderrors "errors"
 	"fmt"
+	"io"
+	"runtime"
 	"strings"
 
-	"github.com/pkg/errors"
-	"k8s.io/apimachinery/pkg/labels"
+	"github.com/xhanio/labels"
 )
 
 var _ Error = (*base)(nil)
@@ -84,40 +85,14 @@ func (b *base) Error() string {
 	return builder.String()
 }
 
-// Code returns the error code and details by traversing the cause chain until a non-empty code is found
+// Code returns the outermost code in the chain and its details, as CodeOf does.
 func (b *base) Code() (string, labels.Set) {
-	curr := b
-	for curr != nil {
-		if curr.code != "" {
-			return curr.code, curr.details
-		}
-		cb, ok := curr.cause.(*base)
-		if !ok {
-			break
-		}
-		curr = cb
-	}
-	return "", nil
+	return CodeOf(b)
 }
 
-// Category returns the error category by traversing the cause chain, defaulting to Internal if none found
+// Category returns the category the error resolves to, as CategoryOf does.
 func (b *base) Category() Category {
-	curr := b
-	for curr != nil {
-		if curr.category != nil {
-			return curr.category
-		}
-		cc, ok := curr.cause.(*errCategory)
-		if ok {
-			return cc
-		}
-		cb, ok := curr.cause.(*base)
-		if !ok {
-			break
-		}
-		curr = cb
-	}
-	return Internal
+	return CategoryOf(b)
 }
 
 // Cause returns the underlying cause of this error
@@ -131,29 +106,55 @@ func (b *base) Unwrap() error {
 	return b.cause
 }
 
-// StackTrace returns the stack trace from the root error in the chain
-func (b *base) StackTrace() errors.StackTrace {
-	rb := b.rootBase()
-	if rb == nil || rb.stack == nil {
-		return nil
-	}
-	return rb.stack.StackTrace()
+// StackTrace returns the stack trace the package-level StackTrace reports for
+// this error, as resolved frames, or nil if none was captured.
+func (b *base) StackTrace() []runtime.Frame {
+	return StackTrace(b)
 }
 
-// Format implements fmt.Formatter interface to provide custom error formatting
+// StackFrames returns the program counters behind StackTrace, unresolved, or
+// nil if none were captured. Error reporters such as Sentry look this method up
+// by name and prefer it to StackTrace, and raw program counters let them expand
+// inlined calls themselves.
+func (b *base) StackFrames() []uintptr {
+	if s := stackOf(b); s != nil {
+		return append([]uintptr(nil), s.pcs...)
+	}
+	return nil
+}
+
+// Format implements fmt.Formatter. %s and %v print Error() and nothing else, so
+// an error from this package reads like any other when printed or wrapped with
+// fmt.Errorf("%w"), which renders its operand with %v. %+v adds the code and
+// details before the message and the stack trace after it, followed by each
+// reason in its own %+v form when the chain holds a tree of errors, such as one
+// from Combine. %q prints Error() quoted, and %m prints only the outermost
+// message.
 func (b *base) Format(f fmt.State, c rune) {
 	msg := b.Error()
 	switch c {
 	case 'm':
-		fmt.Fprint(f, b.Message())
+		io.WriteString(f, b.Message())
 	case 's':
-		fmt.Fprint(f, msg)
+		io.WriteString(f, msg)
+	case 'q':
+		fmt.Fprintf(f, "%q", msg)
 	case 'v':
-		code, details := b.Code()
-		if code != "" {
-			msg = fmt.Sprintf("{%s}%s", strings.Join([]string{code, details.String()}, ":"), msg)
+		if !f.Flag('+') {
+			io.WriteString(f, msg)
+			return
 		}
-		fmt.Fprintf(f, "%s%+v", msg, b.StackTrace())
+		if code, details := b.Code(); code != "" {
+			if len(details) > 0 {
+				code += ":" + details.String()
+			}
+			msg = "{" + code + "}" + msg
+		}
+		io.WriteString(f, msg)
+		writeFrames(f, b.StackTrace())
+		if reasons := reasonsOf(b); reasons != nil {
+			writeReasons(f, reasons)
+		}
 	default:
 		fmt.Fprintf(f, "!%%%c(%s)", c, msg)
 	}
