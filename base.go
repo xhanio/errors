@@ -43,7 +43,11 @@ func (b *base) rootBase() *base {
 	return curr
 }
 
-// Message returns the error message, traversing the cause chain if the current message is empty
+// Message returns the outermost message among this package's layers. When none
+// of those layers has a message, it returns the text of the first cause that is
+// not such a layer: an error from another package, a Handled barrier, or a bare
+// Category. Wrap(err).Message() therefore reads err.Error(), and so does %m. For
+// a message this package's layers wrote and nothing else, use MessageOf.
 func (b *base) Message() string {
 	curr := b
 	for curr != nil && curr.message == "" {

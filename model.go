@@ -7,7 +7,7 @@ import (
 )
 
 type Error interface {
-	Message() string            // latest error message without cause
+	Message() string            // outermost message, else the text of the first cause that is not a layer of this package; see MessageOf
 	Error() string              // all error messages concatenated
 	Format(f fmt.State, c rune) // %s, %v, %q and %m print messages; %+v adds code, details and stack
 	Code() (string, labels.Set) // outermost code and its details, as CodeOf

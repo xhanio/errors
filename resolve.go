@@ -35,23 +35,8 @@ func CategoryOf(err error) Category {
 	if err == nil {
 		return nil
 	}
-	for curr := err; curr != nil; {
-		switch e := curr.(type) {
-		case *base:
-			if e.category != nil {
-				return e.category
-			}
-		case Category:
-			return e
-		}
-		switch u := curr.(type) {
-		case interface{ Unwrap() []error }:
-			return Combined
-		case interface{ Unwrap() error }:
-			curr = u.Unwrap()
-		default:
-			curr = nil
-		}
+	if c := givenCategory(err); c != nil {
+		return c
 	}
 	// The chain holds no category and no tree, so errors.Is walks only the
 	// chain just examined.
@@ -62,6 +47,65 @@ func CategoryOf(err error) Category {
 		return DeadlineExceeded
 	}
 	return Internal
+}
+
+// Categorized reports whether the category CategoryOf resolves err to was
+// given to err rather than assumed: whether err's chain holds a category, set
+// on an error from this package or used as an error itself, or a tree of
+// errors, which resolves to Combined. Categorized reports false for a nil
+// error, and for one whose category is only CategoryOf's default: Internal, or
+// Canceled or DeadlineExceeded for a context error. A declared Internal counts
+// as given.
+//
+// Use Categorized where an error type from another package carries a
+// classification of its own that this package cannot read, such as the status
+// code of a web framework's HTTP error. An adapter can honour that
+// classification when Categorized reports false, without overriding a
+// category that a wrapper declared:
+//
+//	status := errors.CategoryOf(err).StatusCode()
+//	var he *echo.HTTPError
+//	if !errors.Categorized(err) && errors.As(err, &he) {
+//		status = he.Code
+//	}
+//
+// Honour only classifications made for the request being served, such as by
+// the framework serving it. A classification from another service is that
+// service's verdict on its own request; absorb such an error with Handled,
+// which neither Categorized nor errors.As looks behind.
+//
+// Categorized does not look at where a category sits relative to an error from
+// another package. A category declared beneath a framework error still counts:
+// when the framework error wraps NotFound.Newf(...), the adapter above answers
+// 404 rather than the framework's status.
+func Categorized(err error) bool {
+	return givenCategory(err) != nil
+}
+
+// givenCategory returns the first category in err's chain, walking from the
+// outside in through wrappers from any package: one set on an error from this
+// package, or a Category used as an error itself. It returns Combined if it
+// meets a tree of errors first, and nil if the chain holds neither.
+func givenCategory(err error) Category {
+	for err != nil {
+		switch e := err.(type) {
+		case *base:
+			if e.category != nil {
+				return e.category
+			}
+		case Category:
+			return e
+		}
+		switch u := err.(type) {
+		case interface{ Unwrap() []error }:
+			return Combined
+		case interface{ Unwrap() error }:
+			err = u.Unwrap()
+		default:
+			return nil
+		}
+	}
+	return nil
 }
 
 // CodeOf returns the outermost code in err's chain together with the details
@@ -81,4 +125,32 @@ func CodeOf(err error) (string, labels.Set) {
 		err = u.Unwrap()
 	}
 	return "", nil
+}
+
+// MessageOf returns the outermost message set with this package in err's
+// chain, as by Newf, Wrapf, or WithMessage, or the empty string if there is
+// none. Like CodeOf, it walks through wrappers from any package and stops at a
+// tree of errors, which carries no message of its own. Handled stops it too:
+// an absorbed error's message is not yours.
+//
+// Unlike Error.Message, MessageOf never falls back to the text of an error
+// from another package. Wrap(dbErr).Message() returns the database driver's
+// message, which can name hosts, users, or queries; MessageOf returns the
+// empty string.
+//
+// Use MessageOf when a response to a client is to carry a message, since it is
+// text your code wrote rather than text it received. It does not make the
+// message safe to show: what a message says is up to whoever wrote it.
+func MessageOf(err error) string {
+	for err != nil {
+		if b, ok := err.(*base); ok && b.message != "" {
+			return b.message
+		}
+		u, ok := err.(interface{ Unwrap() error })
+		if !ok {
+			break
+		}
+		err = u.Unwrap()
+	}
+	return ""
 }

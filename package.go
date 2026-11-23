@@ -105,8 +105,9 @@ func As(err error, target any) bool {
 }
 
 // Message returns err.Error(), or the empty string if err is nil. For errors
-// this package produced, that is every message in the chain, joined by ": ".
-// To read only the outermost message, use Error.Message.
+// this package produced, that is every message in the chain, joined by ": ",
+// including the text of any error from another package that the chain wraps.
+// To read only the outermost message this package set, use MessageOf.
 func Message(err error) string {
 	if err != nil {
 		return err.Error()

@@ -103,6 +103,129 @@ func TestCodeOf(t *testing.T) {
 	}
 }
 
+// MessageOf mirrors CodeOf: the outermost message set with this package wins,
+// wrappers from other packages do not hide it, and neither an archive nor a
+// Handled barrier carries one of its own. Unlike Error.Message, it never falls
+// back to text this package did not write.
+func TestMessageOf(t *testing.T) {
+	foreign := stderrors.New(`pq: password authentication failed for user "admin"`)
+
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"nil", nil, ""},
+		{"own error", Newf("load user"), "load user"},
+		{"own error without message", New(), ""},
+		{"foreign error", foreign, ""},
+		{"message-less wrap of a foreign error", Wrap(foreign), ""},
+		{"category wrap of a foreign error", Internal.Wrap(foreign), ""},
+		{"wrap of a bare category", Wrap(NotFound), ""},
+		{"own message over a foreign error", Wrapf(foreign, "load user"), "load user"},
+		{"message-less layer over a written one", Wrap(Wrapf(foreign, "load user")), "load user"},
+		{"outermost message wins", Wrapf(Wrapf(foreign, "query users"), "load user"), "load user"},
+		{"through fmt.Errorf", fmt.Errorf("handler: %w", Wrapf(foreign, "load user")), "load user"},
+		{"through a barrier", Unavailable.Wrap(Handled(Wrapf(foreign, "users service"))), ""},
+		{"declared barrier", Unavailable.Wrapf(Handled(foreign), "call users service"), "call users service"},
+		{"archive", Combine(Newf("email is required"), Newf("password is too short")), ""},
+		{"message-less wrap of an archive", Wrap(Combine(Newf("email is required"), Newf("password is too short"))), ""},
+		{"declared archive", BadRequest.Wrapf(Combine(Newf("email is required"), Newf("password is too short")), "invalid request"), "invalid request"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := MessageOf(tt.err); got != tt.want {
+				t.Errorf("MessageOf() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// httpError stands for a web framework's error type that carries a
+// classification of its own, as echo's *HTTPError carries a status code, and
+// unwraps to the error behind it.
+type httpError struct {
+	code int
+	err  error
+}
+
+func (e *httpError) Error() string { return "http error" }
+func (e *httpError) Unwrap() error { return e.err }
+
+// Categorized tells a category the chain declares, even Internal, from the one
+// CategoryOf assumes for an error that carries none.
+func TestCategorized(t *testing.T) {
+	foreign := stderrors.New("x")
+	nf := NotFound.Newf("user 1 not found")
+
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"own error with category", nf, true},
+		{"bare category", NotFound, true},
+		{"own error without category", Newf("x"), false},
+		{"foreign error", foreign, false},
+		{"message-less wrap of a foreign error", Wrap(foreign), false},
+		{"declared Internal", Internal.Wrap(foreign), true},
+		{"category through fmt.Errorf", fmt.Errorf("handler: %w", nf), true},
+		{"category under a framework error", Wrap(&httpError{code: 401, err: nf}), true},
+		{"framework error without category", Wrap(&httpError{code: 400, err: foreign}), false},
+		{"context error", Wrap(context.Canceled), false},
+		{"declared over a context error", Unavailable.Wrap(context.DeadlineExceeded), true},
+		{"archive", Combine(Newf("a"), Newf("b")), true},
+		{"foreign tree", stderrors.Join(foreign, Newf("b")), true},
+		{"barrier", Handled(nf), false},
+		{"declared barrier", Unavailable.Wrap(Handled(nf)), true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := Categorized(tt.err); got != tt.want {
+				t.Errorf("Categorized() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// An adapter honours a framework's own classification only where nothing
+// declared a category, so a declared Internal is never overridden.
+func TestCategorizedAdapter(t *testing.T) {
+	status := func(err error) int {
+		var he *httpError
+		if !Categorized(err) && As(err, &he) {
+			return he.code
+		}
+		return CategoryOf(err).StatusCode()
+	}
+	bind := func() error { return &httpError{code: 400, err: stderrors.New("syntax error")} }
+
+	tests := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{"wrapped without category", Wrap(bind()), 400},
+		{"declared Internal", Internal.Wrap(bind()), 500},
+		{"declared BadRequest", BadRequest.Wrapf(bind(), "bind user"), 400},
+		{"absorbed", Wrap(Handled(bind())), 500},
+		{"in an archive", Wrap(Combine(bind(), Newf("b"))), 500},
+		{"no framework error", Wrap(stderrors.New("x")), 500},
+		// Documented limitation: a category beneath the framework error counts.
+		{"category beneath the framework error", Wrap(&httpError{code: 401, err: NotFound.Newf("x")}), 404},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := status(tt.err); got != tt.want {
+				t.Errorf("status = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
 // deadlineErr reports itself as context.DeadlineExceeded through an Is method,
 // as some libraries' timeout errors do.
 type deadlineErr struct{}

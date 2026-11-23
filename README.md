@@ -151,12 +151,13 @@ if errors.Is(err, originalErr) {
 }
 ```
 
-To read a category or a code rather than test for one, resolve it. These work on
-any error, whichever package created or wrapped it:
+To read a category, a code, or a message rather than test for one, resolve it.
+These work on any error, whichever package created or wrapped it:
 
 ```go
 status := errors.CategoryOf(err).StatusCode()  // Internal (500) if err carries no category
 code, details := errors.CodeOf(err)            // "" and nil if err carries no code
+msg := errors.MessageOf(err)                   // "" if this package set no message
 ```
 
 Context errors are the exception to the `Internal` default, so that a caller
@@ -237,12 +238,32 @@ fmt.Printf("Code: %s, Status: %d\n", code, category.StatusCode())
 
 Build a response from the category, code, and details, which are meant to be
 read by programs. Do not send `Error()`: it carries every message in the chain,
-including raw messages from inner errors such as a database driver's.
+including raw messages from inner errors such as a database driver's. Do not
+send `Error.Message()` or `%m` either: when no layer from this package has a
+message, they fall back to the text of the error the chain wraps, so
+`errors.Wrap(dbErr).Message()` returns the driver's message, and
+`errors.Unavailable.Wrap(errors.Handled(err)).Message()` the other service's.
+
+When the response is to carry a message, take it from `MessageOf`. It returns
+the outermost message set with this package, by `Newf`, `Wrapf`, or
+`WithMessage`, and never the text of an error from another package. It returns
+the empty string when there is none, so fall back to something generic, such as
+the category's name:
 
 ```go
-status := errors.CategoryOf(err).StatusCode()
+category := errors.CategoryOf(err)
+status := category.StatusCode()
 code, details := errors.CodeOf(err)
+msg := errors.MessageOf(err)
+if msg == "" {
+    msg = category.Error() // such as "Internal"
+}
 ```
+
+`MessageOf` keeps out the text you received, not the text you wrote: a message
+such as `Wrapf(err, "connect to %s", dsn)` goes out as written. Like `CodeOf`, it
+walks through wrappers from any package, and it stops at a combined error and at
+`Handled`.
 
 ### Absorbing Errors from Other Services
 
@@ -262,6 +283,41 @@ if err != nil {
 
 The stack trace is kept for diagnosis: `StackTrace` sees through the barrier,
 and `%+v` prints the absorbed error in full.
+
+### Honouring a Framework's Own Classification
+
+Some error types from other packages carry a classification this package cannot
+read, such as the status code of a web framework's HTTP error. Echo's `c.Bind`
+returns a 400 `*echo.HTTPError`, yet `errors.Wrap` of it resolves to `Internal`,
+because nothing in the chain declares a category. `CategoryOf` cannot tell that
+from a declared `Internal`. `Categorized` can: it reports whether the category
+was given to the error, by a category in its chain or by a combined error,
+rather than assumed. The categories of context errors are assumed too.
+
+```go
+errors.Categorized(errors.Wrap(bindErr))           // false: Internal is assumed
+errors.Categorized(errors.Internal.Wrap(bindErr))  // true: Internal is declared
+```
+
+An adapter can then honour the framework's classification without overriding a
+category that someone declared:
+
+```go
+status := errors.CategoryOf(err).StatusCode()
+var he *echo.HTTPError
+if !errors.Categorized(err) && errors.As(err, &he) {
+    status = he.Code
+}
+```
+
+Honour only classifications made for the request being served. A status from
+another service is that service's verdict on its own request: absorb such an
+error with `Handled`, behind which neither `Categorized` nor `errors.As` looks.
+
+`Categorized` does not look at where a category sits relative to the framework
+error. A category declared beneath the framework error still counts, so if the
+framework error wraps a `NotFound`, the adapter above answers 404 rather than
+the framework's status.
 
 ### Error Chaining and Traversal
 
@@ -405,7 +461,7 @@ Errors implement the `Error` interface providing these methods:
 
 ```go
 type Error interface {
-    Message() string             // Outermost error message, without causes
+    Message() string             // Outermost message, else the wrapped cause's text; see MessageOf
     Error() string               // All messages in the chain, joined by ": "
     Format(f fmt.State, c rune)  // Supports the %s, %v, %+v, %q and %m verbs
     Code() (string, labels.Set)  // Outermost code and its details; see CodeOf
@@ -436,7 +492,8 @@ type Errors interface {
 
 Like `Error`, it is lost as soon as another package wraps the error, so prefer
 the package-level functions, which accept any error and see through wrappers:
-`CategoryOf`, `CodeOf`, `StackTrace`, `Is`, `Any`, `All`, and `ErrorsOf`.
+`CategoryOf`, `Categorized`, `CodeOf`, `MessageOf`, `StackTrace`, `Is`, `Any`,
+`All`, and `ErrorsOf`.
 
 ### Category Interface
 
@@ -465,6 +522,25 @@ Customize errors using these options:
 - `WithCode(code, details)`: Add error code and key-value details
 - `WithMessage(format, args...)`: Set formatted error message
 - `WithCategory(category)`: Set error category
+
+## What's New in v1.3.0
+
+No behaviour changes; v1.3.0 only adds API.
+
+### Additions
+
+- `MessageOf`, the outermost message set with this package, which never falls
+  back to the text of an error from another package. See
+  [Responding to Clients](#responding-to-clients).
+- `Categorized`, which tells a category given to an error, a declared
+  `Internal` included, from the default that `CategoryOf` assumes. See
+  [Honouring a Framework's Own Classification](#honouring-a-frameworks-own-classification).
+
+### Documentation
+
+- `Error.Message` is now documented as it behaves: when no layer from this
+  package has a message, it returns the text of the error from another package
+  that the chain wraps. It used to be documented as leaving causes out.
 
 ## What's New in v1.2.0
 
